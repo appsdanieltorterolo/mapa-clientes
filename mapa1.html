@@ -1,0 +1,1138 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visualizador de Clientes en Mapa</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20n6a9+T66iG9fRD84SN+TqjVfI/p9m+Lh0o/B7d6L6i=" crossorigin=""></script>
+    <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/xlsx.full.min.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
+        }
+        #map {
+            height: 70vh;
+            width: 100%;
+            border-radius: 0.75rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+        .leaflet-container {
+            font: 12px/1.5 "Helvetica Neue", Arial, Helvetica, sans-serif;
+        }
+        .controls-container {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+            width: 100%;
+        }
+        @media (min-width: 768px) {
+            .controls-container {
+                flex-direction: row;
+                justify-content: space-between;
+                align-items: center;
+            }
+        }
+        .download-button {
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        .download-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3b82f6;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .message-box {
+            position: fixed;
+            top: 2rem;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 1rem 1.5rem;
+            border-radius: 0.75rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            z-index: 1000;
+            opacity: 0;
+            transition: opacity 0.5s ease;
+        }
+        .message-box.visible {
+            opacity: 1;
+        }
+        .message-box.success {
+            background-color: #d1fae5;
+            color: #065f46;
+        }
+        .message-box.error {
+            background-color: #fee2e2;
+            color: #991b1b;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 p-6 md:p-12">
+
+    <div class="max-w-7xl mx-auto space-y-8">
+        <!-- Título y descripción -->
+        <header class="text-center space-y-2">
+            <h1 class="text-3xl md:text-4xl font-bold text-gray-800">Visualizador de Clientes en Mapa</h1>
+            <p class="text-gray-600 max-w-2xl mx-auto">Sube un archivo Excel o CSV con coordenadas, dibuja una zona en el mapa y descarga los datos de los clientes que se encuentren dentro de esa área.</p>
+        </header>
+
+        <!-- Controles de la aplicación -->
+        <div class="controls-container bg-white p-6 rounded-xl shadow-md">
+            <!-- Subir archivo -->
+            <div class="flex items-center space-x-4">
+                <label id="fileInputLabel" for="fileInput" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 cursor-pointer transition-colors duration-200">
+                    <div id="uploadLoader" class="loader mr-2 hidden"></div>
+                    <svg id="uploadIcon" class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
+                    <span>Subir Archivo</span>
+                </label>
+                <input id="fileInput" type="file" accept=".xlsx, .xls, .csv" class="hidden">
+                <span id="fileName" class="text-gray-500 text-sm">Ningún archivo seleccionado</span>
+            </div>
+
+            <!-- Botón de descarga -->
+            <button id="downloadBtn" class="download-button inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors duration-200" style="display: none;">
+                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                <span id="downloadText">Descargar Clientes Seleccionados</span>
+            </button>
+        </div>
+
+        <!-- Contenedor del mapa -->
+        <div id="map" class="w-full"></div>
+    </div>
+
+    <!-- Mensaje de notificación -->
+    <div id="messageBox" class="message-box"></div>
+
+    <script>
+        // Este script maneja toda la lógica de la aplicación, incluyendo la visualización del mapa, el dibujo de zonas y la descarga de datos.
+
+        // Variables globales
+        let map;
+        let drawnItems;
+        let clientsData = [];
+        let markers = L.layerGroup();
+        let drawControl;
+        let polygonDrawn = false;
+        
+        const fileNameSpan = document.getElementById('fileName');
+        const fileInput = document.getElementById('fileInput');
+        const fileInputLabel = document.getElementById('fileInputLabel');
+        const uploadLoader = document.getElementById('uploadLoader');
+        const uploadIcon = document.getElementById('uploadIcon');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const messageBox = document.getElementById('messageBox');
+        
+        // Inicializa el mapa
+        function initializeMap() {
+            // Se centra el mapa en una ubicación por defecto
+            map = L.map('map').setView([40.4168, -3.7038], 6); // Madrid, España
+            
+            // Añade la capa de tiles de OpenStreetMap
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            }).addTo(map);
+
+            // Crea una capa para los elementos dibujados
+            drawnItems = new L.FeatureGroup();
+            map.addLayer(drawnItems);
+
+            // Configura el control de dibujo para solo permitir polígonos
+            drawControl = new L.Control.Draw({
+                edit: {
+                    featureGroup: drawnItems
+                },
+                draw: {
+                    polygon: true,
+                    polyline: false,
+                    rectangle: false,
+                    circle: false,
+                    marker: false,
+                    circlemarker: false
+                }
+            });
+            map.addControl(drawControl);
+            
+            // Añade los marcadores de clientes
+            map.addLayer(markers);
+
+            // Escucha el evento cuando se dibuja algo en el mapa
+            map.on(L.Draw.Event.CREATED, function (event) {
+                if (polygonDrawn) {
+                    showNotification('Solo puedes dibujar un polígono a la vez. Borra el actual para dibujar uno nuevo.', 'error');
+                    return;
+                }
+                const layer = event.layer;
+                drawnItems.addLayer(layer);
+                polygonDrawn = true;
+                downloadBtn.style.display = 'inline-flex';
+                showNotification('Zona dibujada. Haz clic en "Descargar" para obtener los clientes de la zona.', 'success');
+            });
+            
+            // Escucha el evento cuando se borra algo del mapa
+            map.on(L.Draw.Event.DELETED, function (event) {
+                polygonDrawn = false;
+                downloadBtn.style.display = 'none';
+            });
+        }
+        
+        // Maneja la carga del archivo Excel o CSV
+        fileInput.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (!file) {
+                uploadLoader.classList.add('hidden');
+                uploadIcon.classList.remove('hidden');
+                return;
+            }
+            
+            fileNameSpan.textContent = file.name;
+            uploadLoader.classList.remove('hidden');
+            uploadIcon.classList.add('hidden');
+
+            const reader = new FileReader();
+            
+            // La detección del tipo de archivo se basa en el MIME type y la extensión.
+            const mimeType = file.type;
+            const fileExtension = file.name.split('.').pop().toLowerCase();
+
+            if (mimeType.includes('csv') || fileExtension === 'csv') {
+                reader.onload = function(e) {
+                    try {
+                        Papa.parse(e.target.result, {
+                            header: true,
+                            skipEmptyLines: true,
+                            complete: function(results) {
+                                clientsData = results.data;
+                                if (clientsData.length === 0 || !clientsData.some(c => c.latitud && c.longitud)) {
+                                    showNotification('El archivo CSV no contiene datos válidos.', 'error');
+                                } else {
+                                    renderClientsOnMap();
+                                }
+                            }
+                        });
+                    } catch (error) {
+                        showNotification('Error al procesar el archivo CSV. Asegúrate de que sea un archivo CSV válido y que tenga los encabezados correctos.', 'error');
+                    } finally {
+                        uploadLoader.classList.add('hidden');
+                        uploadIcon.classList.remove('hidden');
+                    }
+                };
+                reader.readAsText(file);
+            } else if (mimeType.includes('excel') || fileExtension === 'xlsx' || fileExtension === 'xls') {
+                reader.onload = function(e) {
+                    const data = new Uint8Array(e.target.result);
+                    try {
+                        const workbook = XLSX.read(data, { type: 'array' });
+                        if (workbook.SheetNames.length === 0) {
+                            showNotification('El archivo Excel no contiene ninguna hoja.', 'error');
+                            return;
+                        }
+                        const firstSheetName = workbook.SheetNames[0];
+                        const worksheet = workbook.Sheets[firstSheetName];
+                        
+                        clientsData = XLSX.utils.sheet_to_json(worksheet);
+                        
+                        if (clientsData.length === 0 || !clientsData.some(c => c.latitud && c.longitud)) {
+                            showNotification('El archivo no contiene datos válidos.', 'error');
+                            return;
+                        }
+                        
+                        renderClientsOnMap();
+                    } catch (error) {
+                        showNotification('Error al procesar el archivo Excel. Asegúrate de que sea un archivo válido y que la primera hoja tenga datos.', 'error');
+                    } finally {
+                        uploadLoader.classList.add('hidden');
+                        uploadIcon.classList.remove('hidden');
+                    }
+                };
+                reader.onerror = function(e) {
+                    showNotification('Error al leer el archivo. Asegúrate de que sea un archivo válido.', 'error');
+                    uploadLoader.classList.add('hidden');
+                    uploadIcon.classList.remove('hidden');
+                };
+                reader.readAsArrayBuffer(file);
+            } else {
+                showNotification('Tipo de archivo no compatible. Por favor, sube un archivo .xlsx, .xls o .csv.', 'error');
+                uploadLoader.classList.add('hidden');
+                uploadIcon.classList.remove('hidden');
+            }
+        });
+
+        // Agrega un listener de clic al label para activar el input de archivo.
+        fileInputLabel.addEventListener('click', () => {
+            fileInput.click();
+        });
+        
+        // Renderiza los clientes en el mapa como marcadores
+        function renderClientsOnMap() {
+            markers.clearLayers();
+            const validClients = clientsData.filter(c => c.latitud && c.longitud);
+
+            if (validClients.length === 0) {
+                showNotification('El archivo no contiene datos de latitud/longitud válidos.', 'error');
+                return;
+            }
+
+            validClients.forEach(client => {
+                const lat = parseFloat(client.latitud);
+                const lon = parseFloat(client.longitud);
+                
+                if (!isNaN(lat) && !isNaN(lon)) {
+                    const marker = L.marker([lat, lon]);
+                    
+                    let popupContent = `<b>Cliente:</b> ${client.nombre || 'N/A'}<br/>`;
+                    for (const key in client) {
+                        if (key !== 'latitud' && key !== 'longitud') {
+                            popupContent += `<b>${key}:</b> ${client[key] || 'N/A'}<br/>`;
+                        }
+                    }
+                    marker.bindPopup(popupContent);
+                    markers.addLayer(marker);
+                }
+            });
+
+            showNotification(`Se han cargado ${validClients.length} clientes en el mapa.`, 'success');
+
+            if (markers.getLayers().length > 0) {
+                const bounds = markers.getBounds();
+                if (bounds.isValid()) {
+                    map.fitBounds(bounds);
+                }
+            }
+        }
+        
+        // Maneja la descarga del archivo Excel
+        downloadBtn.addEventListener('click', () => {
+            if (!drawnItems.getLayers().length) {
+                showNotification('Por favor, dibuja un polígono en el mapa primero.', 'error');
+                return;
+            }
+            
+            const polygonLayer = drawnItems.getLayers()[0];
+            const polygon = polygonLayer.toGeoJSON();
+            
+            const filteredClients = clientsData.filter(client => {
+                const lat = parseFloat(client.latitud);
+                const lon = parseFloat(client.longitud);
+                if (isNaN(lat) || isNaN(lon)) return false;
+                
+                const point = [lon, lat];
+                return isPointInPolygon(point, polygon.geometry.coordinates[0]);
+            });
+            
+            if (filteredClients.length > 0) {
+                const worksheet = XLSX.utils.json_to_sheet(filteredClients);
+                const workbook = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(workbook, worksheet, "Clientes");
+                XLSX.writeFile(workbook, "clientes_seleccionados.xlsx");
+                showNotification(`Se han descargado ${filteredClients.length} clientes.`, 'success');
+            } else {
+                showNotification('No se encontraron clientes en la zona dibujada.', 'error');
+            }
+        });
+
+        // Función para verificar si un punto está dentro de un polígono (algoritmo de ray-casting)
+        function isPointInPolygon(point, polygon) {
+            let x = point[0], y = point[1];
+            let inside = false;
+            for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+                let xi = polygon[i][0], yi = polygon[i][1];
+                let xj = polygon[j][0], yj = polygon[j][1];
+
+                let intersect = ((yi > y) != (yj > y))
+                    && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+                if (intersect) inside = !inside;
+            }
+            return inside;
+        }
+
+        // Función para mostrar notificaciones al usuario
+        function showNotification(message, type) {
+            messageBox.textContent = message;
+            messageBox.className = `message-box visible ${type}`;
+            setTimeout(() => {
+                messageBox.className = 'message-box';
+            }, 5000);
+        }
+
+        // Inicializa el mapa cuando la página se carga
+        window.onload = initializeMap;
+    </script>
+</body>
+</html>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visualizador de Clientes en Mapa</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20n6a9+T66iG9fRD84SN+TqjVfI/p9m+Lh0o/B7d6L6i=" crossorigin=""></script>
+    <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/xlsx.full.min.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
+        }
+        #map {
+            height: 70vh;
+            width: 100%;
+            border-radius: 0.75rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+        .leaflet-container {
+            font: 12px/1.5 "Helvetica Neue", Arial, Helvetica, sans-serif;
+        }
+        .controls-container {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+            width: 100%;
+        }
+        @media (min-width: 768px) {
+            .controls-container {
+                flex-direction: row;
+                justify-content: space-between;
+                align-items: center;
+            }
+        }
+        .download-button {
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        .download-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3b82f6;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .message-box {
+            position: fixed;
+            top: 2rem;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 1rem 1.5rem;
+            border-radius: 0.75rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            z-index: 1000;
+            opacity: 0;
+            transition: opacity 0.5s ease;
+        }
+        .message-box.visible {
+            opacity: 1;
+        }
+        .message-box.success {
+            background-color: #d1fae5;
+            color: #065f46;
+        }
+        .message-box.error {
+            background-color: #fee2e2;
+            color: #991b1b;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 p-6 md:p-12">
+
+    <div class="max-w-7xl mx-auto space-y-8">
+        <!-- Título y descripción -->
+        <header class="text-center space-y-2">
+            <h1 class="text-3xl md:text-4xl font-bold text-gray-800">Visualizador de Clientes en Mapa</h1>
+            <p class="text-gray-600 max-w-2xl mx-auto">Sube un archivo Excel o CSV con coordenadas, dibuja una zona en el mapa y descarga los datos de los clientes que se encuentren dentro de esa área.</p>
+        </header>
+
+        <!-- Controles de la aplicación -->
+        <div class="controls-container bg-white p-6 rounded-xl shadow-md">
+            <!-- Subir archivo -->
+            <div class="flex items-center space-x-4">
+                <button id="uploadBtn" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 cursor-pointer transition-colors duration-200">
+                    <div id="uploadLoader" class="loader mr-2 hidden"></div>
+                    <svg id="uploadIcon" class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
+                    <span>Subir Archivo</span>
+                </button>
+                <input id="fileInput" type="file" accept=".xlsx, .xls, .csv" class="hidden">
+                <span id="fileName" class="text-gray-500 text-sm">Ningún archivo seleccionado</span>
+            </div>
+
+            <!-- Botón de descarga -->
+            <button id="downloadBtn" class="download-button inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors duration-200" style="display: none;">
+                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                <span id="downloadText">Descargar Clientes Seleccionados</span>
+            </button>
+        </div>
+
+        <!-- Contenedor del mapa -->
+        <div id="map" class="w-full"></div>
+    </div>
+
+    <!-- Mensaje de notificación -->
+    <div id="messageBox" class="message-box"></div>
+
+    <script>
+        // Este script maneja toda la lógica de la aplicación, incluyendo la visualización del mapa, el dibujo de zonas y la descarga de datos.
+
+        // Variables globales
+        let map;
+        let drawnItems;
+        let clientsData = [];
+        let markers = L.layerGroup();
+        let drawControl;
+        let polygonDrawn = false;
+        
+        const fileNameSpan = document.getElementById('fileName');
+        const fileInput = document.getElementById('fileInput');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const uploadLoader = document.getElementById('uploadLoader');
+        const uploadIcon = document.getElementById('uploadIcon');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const messageBox = document.getElementById('messageBox');
+        
+        // Inicializa el mapa
+        function initializeMap() {
+            // Se centra el mapa en una ubicación por defecto
+            map = L.map('map').setView([-34.8, -56.1], 10); // Montevideo, Uruguay
+            
+            // Añade la capa de tiles de OpenStreetMap
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            }).addTo(map);
+
+            // Crea una capa para los elementos dibujados
+            drawnItems = new L.FeatureGroup();
+            map.addLayer(drawnItems);
+
+            // Configura el control de dibujo para solo permitir polígonos
+            drawControl = new L.Control.Draw({
+                edit: {
+                    featureGroup: drawnItems
+                },
+                draw: {
+                    polygon: true,
+                    polyline: false,
+                    rectangle: false,
+                    circle: false,
+                    marker: false,
+                    circlemarker: false
+                }
+            });
+            map.addControl(drawControl);
+            
+            // Añade los marcadores de clientes
+            map.addLayer(markers);
+
+            // Escucha el evento cuando se dibuja algo en el mapa
+            map.on(L.Draw.Event.CREATED, function (event) {
+                if (polygonDrawn) {
+                    showNotification('Solo puedes dibujar un polígono a la vez. Borra el actual para dibujar uno nuevo.', 'error');
+                    return;
+                }
+                const layer = event.layer;
+                drawnItems.addLayer(layer);
+                polygonDrawn = true;
+                downloadBtn.style.display = 'inline-flex';
+                showNotification('Zona dibujada. Haz clic en "Descargar" para obtener los clientes de la zona.', 'success');
+            });
+            
+            // Escucha el evento cuando se borra algo del mapa
+            map.on(L.Draw.Event.DELETED, function (event) {
+                polygonDrawn = false;
+                downloadBtn.style.display = 'none';
+            });
+        }
+        
+        // Maneja la carga del archivo Excel o CSV
+        fileInput.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (!file) {
+                return;
+            }
+            
+            fileNameSpan.textContent = file.name;
+            uploadLoader.classList.remove('hidden');
+            uploadIcon.classList.add('hidden');
+
+            const reader = new FileReader();
+            
+            // La detección del tipo de archivo se basa en el MIME type y la extensión.
+            const fileExtension = file.name.split('.').pop().toLowerCase();
+
+            if (fileExtension === 'csv') {
+                reader.onload = function(e) {
+                    try {
+                        Papa.parse(e.target.result, {
+                            header: true,
+                            skipEmptyLines: true,
+                            complete: function(results) {
+                                clientsData = results.data;
+                                if (clientsData.length === 0 || !clientsData.some(c => c.latitud && c.longitud)) {
+                                    showNotification('El archivo CSV no contiene datos válidos.', 'error');
+                                } else {
+                                    renderClientsOnMap();
+                                }
+                            }
+                        });
+                    } catch (error) {
+                        showNotification('Error al procesar el archivo CSV. Asegúrate de que sea un archivo CSV válido y que tenga los encabezados correctos.', 'error');
+                    } finally {
+                        uploadLoader.classList.add('hidden');
+                        uploadIcon.classList.remove('hidden');
+                    }
+                };
+                reader.readAsText(file);
+            } else if (fileExtension === 'xlsx' || fileExtension === 'xls') {
+                reader.onload = function(e) {
+                    const data = new Uint8Array(e.target.result);
+                    try {
+                        const workbook = XLSX.read(data, { type: 'array' });
+                        if (workbook.SheetNames.length === 0) {
+                            showNotification('El archivo Excel no contiene ninguna hoja.', 'error');
+                            return;
+                        }
+                        const firstSheetName = workbook.SheetNames[0];
+                        const worksheet = workbook.Sheets[firstSheetName];
+                        
+                        clientsData = XLSX.utils.sheet_to_json(worksheet);
+                        
+                        if (clientsData.length === 0 || !clientsData.some(c => c.latitud && c.longitud)) {
+                            showNotification('El archivo no contiene datos válidos.', 'error');
+                            return;
+                        }
+                        
+                        renderClientsOnMap();
+                    } catch (error) {
+                        showNotification('Error al procesar el archivo Excel. Asegúrate de que sea un archivo válido y que la primera hoja tenga datos.', 'error');
+                    } finally {
+                        uploadLoader.classList.add('hidden');
+                        uploadIcon.classList.remove('hidden');
+                    }
+                };
+                reader.onerror = function(e) {
+                    showNotification('Error al leer el archivo. Asegúrate de que sea un archivo válido.', 'error');
+                    uploadLoader.classList.add('hidden');
+                    uploadIcon.classList.remove('hidden');
+                };
+                reader.readAsArrayBuffer(file);
+            } else {
+                showNotification('Tipo de archivo no compatible. Por favor, sube un archivo .xlsx, .xls o .csv.', 'error');
+                uploadLoader.classList.add('hidden');
+                uploadIcon.classList.remove('hidden');
+            }
+        });
+
+        // Agrega un listener de clic al botón principal para activar el input de archivo.
+        uploadBtn.addEventListener('click', () => {
+            fileInput.click();
+        });
+        
+        // Renderiza los clientes en el mapa como marcadores
+        function renderClientsOnMap() {
+            markers.clearLayers();
+            const validClients = clientsData.filter(c => {
+                // Normaliza los nombres de las columnas para buscar 'latitud' y 'longitud'
+                const normalizedClient = {};
+                for (const key in c) {
+                    normalizedClient[key.toLowerCase().trim()] = c[key];
+                }
+                return normalizedClient.latitud && normalizedClient.longitud;
+            });
+
+            if (validClients.length === 0) {
+                showNotification('El archivo no contiene datos de latitud/longitud válidos. Asegúrate de que las columnas se llamen "latitud" y "longitud".', 'error');
+                return;
+            }
+
+            validClients.forEach(client => {
+                const normalizedClient = {};
+                for (const key in client) {
+                    normalizedClient[key.toLowerCase().trim()] = client[key];
+                }
+
+                const lat = parseFloat(normalizedClient.latitud);
+                const lon = parseFloat(normalizedClient.longitud);
+                
+                if (!isNaN(lat) && !isNaN(lon)) {
+                    const marker = L.marker([lat, lon]);
+                    
+                    let popupContent = ``;
+                    for (const key in client) {
+                        popupContent += `<b>${key}:</b> ${client[key] || 'N/A'}<br/>`;
+                    }
+                    marker.bindPopup(popupContent);
+                    markers.addLayer(marker);
+                }
+            });
+
+            showNotification(`Se han cargado ${validClients.length} clientes en el mapa.`, 'success');
+
+            if (markers.getLayers().length > 0) {
+                const bounds = markers.getBounds();
+                if (bounds.isValid()) {
+                    map.fitBounds(bounds);
+                }
+            }
+        }
+        
+        // Maneja la descarga del archivo Excel
+        downloadBtn.addEventListener('click', () => {
+            if (!drawnItems.getLayers().length) {
+                showNotification('Por favor, dibuja un polígono en el mapa primero.', 'error');
+                return;
+            }
+            
+            const polygonLayer = drawnItems.getLayers()[0];
+            const polygon = polygonLayer.toGeoJSON();
+            
+            const filteredClients = clientsData.filter(client => {
+                const lat = parseFloat(client.latitud);
+                const lon = parseFloat(client.longitud);
+                if (isNaN(lat) || isNaN(lon)) return false;
+                
+                const point = [lon, lat];
+                return isPointInPolygon(point, polygon.geometry.coordinates[0]);
+            });
+            
+            if (filteredClients.length > 0) {
+                const worksheet = XLSX.utils.json_to_sheet(filteredClients);
+                const workbook = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(workbook, worksheet, "Clientes");
+                XLSX.writeFile(workbook, "clientes_seleccionados.xlsx");
+                showNotification(`Se han descargado ${filteredClients.length} clientes.`, 'success');
+            } else {
+                showNotification('No se encontraron clientes en la zona dibujada.', 'error');
+            }
+        });
+
+        // Función para verificar si un punto está dentro de un polígono (algoritmo de ray-casting)
+        function isPointInPolygon(point, polygon) {
+            let x = point[0], y = point[1];
+            let inside = false;
+            for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+                let xi = polygon[i][0], yi = polygon[i][1];
+                let xj = polygon[j][0], yj = polygon[j][1];
+
+                let intersect = ((yi > y) != (yj > y))
+                    && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+                if (intersect) inside = !inside;
+            }
+            return inside;
+        }
+
+        // Función para mostrar notificaciones al usuario
+        function showNotification(message, type) {
+            messageBox.textContent = message;
+            messageBox.className = `message-box visible ${type}`;
+            setTimeout(() => {
+                messageBox.className = 'message-box';
+            }, 5000);
+        }
+
+        // Inicializa el mapa cuando la página se carga
+        window.onload = initializeMap;
+    </script>
+</body>
+</html>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visualizador de Clientes en Mapa</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20n6a9+T66iG9fRD84SN+TqjVfI/p9m+Lh0o/B7d6L6i=" crossorigin=""></script>
+    <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/xlsx.full.min.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
+        }
+        #map {
+            height: 70vh;
+            width: 100%;
+            border-radius: 0.75rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+        .leaflet-container {
+            font: 12px/1.5 "Helvetica Neue", Arial, Helvetica, sans-serif;
+        }
+        .controls-container {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+            width: 100%;
+        }
+        @media (min-width: 768px) {
+            .controls-container {
+                flex-direction: row;
+                justify-content: space-between;
+                align-items: center;
+            }
+        }
+        .download-button {
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        .download-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3b82f6;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .message-box {
+            position: fixed;
+            top: 2rem;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 1rem 1.5rem;
+            border-radius: 0.75rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            z-index: 1000;
+            opacity: 0;
+            transition: opacity 0.5s ease;
+        }
+        .message-box.visible {
+            opacity: 1;
+        }
+        .message-box.success {
+            background-color: #d1fae5;
+            color: #065f46;
+        }
+        .message-box.error {
+            background-color: #fee2e2;
+            color: #991b1b;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 p-6 md:p-12">
+
+    <div class="max-w-7xl mx-auto space-y-8">
+        <!-- Título y descripción -->
+        <header class="text-center space-y-2">
+            <h1 class="text-3xl md:text-4xl font-bold text-gray-800">Visualizador de Clientes en Mapa</h1>
+            <p class="text-gray-600 max-w-2xl mx-auto">Sube un archivo Excel o CSV con coordenadas, dibuja una zona en el mapa y descarga los datos de los clientes que se encuentren dentro de esa área.</p>
+        </header>
+
+        <!-- Controles de la aplicación -->
+        <div class="controls-container bg-white p-6 rounded-xl shadow-md">
+            <!-- Subir archivo -->
+            <div class="flex items-center space-x-4">
+                <label for="fileInput" id="fileInputLabel" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 cursor-pointer transition-colors duration-200">
+                    <div id="uploadLoader" class="loader mr-2 hidden"></div>
+                    <svg id="uploadIcon" class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
+                    <span>Subir Archivo</span>
+                </label>
+                <input id="fileInput" type="file" accept=".xlsx, .xls, .csv" class="hidden">
+                <span id="fileName" class="text-gray-500 text-sm">Ningún archivo seleccionado</span>
+            </div>
+
+            <!-- Botón de descarga -->
+            <button id="downloadBtn" class="download-button inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors duration-200" style="display: none;">
+                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                <span id="downloadText">Descargar Clientes Seleccionados</span>
+            </button>
+        </div>
+
+        <!-- Contenedor del mapa -->
+        <div id="map" class="w-full"></div>
+    </div>
+
+    <!-- Mensaje de notificación -->
+    <div id="messageBox" class="message-box"></div>
+
+    <script>
+        // Este script maneja toda la lógica de la aplicación, incluyendo la visualización del mapa, el dibujo de zonas y la descarga de datos.
+
+        // Variables globales
+        let map;
+        let drawnItems;
+        let clientsData = [];
+        let markers = L.layerGroup();
+        let drawControl;
+        let polygonDrawn = false;
+        
+        const fileNameSpan = document.getElementById('fileName');
+        const fileInput = document.getElementById('fileInput');
+        const uploadLoader = document.getElementById('uploadLoader');
+        const uploadIcon = document.getElementById('uploadIcon');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const messageBox = document.getElementById('messageBox');
+
+        // Normaliza los nombres de las columnas para poder buscar latitud y longitud.
+        function normalizeData(data) {
+            return data.map(row => {
+                const newRow = {};
+                for (const key in row) {
+                    newRow[key.toLowerCase().trim()] = row[key];
+                }
+                return newRow;
+            });
+        }
+        
+        // Inicializa el mapa
+        function initializeMap() {
+            // Se centra el mapa en una ubicación por defecto, idealmente en un área que tenga sentido para los datos
+            map = L.map('map').setView([-34.8, -56.1], 10); // Montevideo, Uruguay
+            
+            // Añade la capa de tiles de OpenStreetMap
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            }).addTo(map);
+
+            // Crea una capa para los elementos dibujados
+            drawnItems = new L.FeatureGroup();
+            map.addLayer(drawnItems);
+
+            // Configura el control de dibujo para solo permitir polígonos
+            drawControl = new L.Control.Draw({
+                edit: {
+                    featureGroup: drawnItems
+                },
+                draw: {
+                    polygon: true,
+                    polyline: false,
+                    rectangle: false,
+                    circle: false,
+                    marker: false,
+                    circlemarker: false
+                }
+            });
+            map.addControl(drawControl);
+            
+            // Añade los marcadores de clientes
+            map.addLayer(markers);
+
+            // Escucha el evento cuando se dibuja algo en el mapa
+            map.on(L.Draw.Event.CREATED, function (event) {
+                if (polygonDrawn) {
+                    showNotification('Solo puedes dibujar un polígono a la vez. Borra el actual para dibujar uno nuevo.', 'error');
+                    return;
+                }
+                const layer = event.layer;
+                drawnItems.addLayer(layer);
+                polygonDrawn = true;
+                downloadBtn.style.display = 'inline-flex';
+                showNotification('Zona dibujada. Haz clic en "Descargar" para obtener los clientes de la zona.', 'success');
+            });
+            
+            // Escucha el evento cuando se borra algo del mapa
+            map.on(L.Draw.Event.DELETED, function (event) {
+                polygonDrawn = false;
+                downloadBtn.style.display = 'none';
+            });
+        }
+        
+        // Maneja la carga del archivo Excel o CSV
+        fileInput.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (!file) {
+                return;
+            }
+            
+            fileNameSpan.textContent = file.name;
+            uploadLoader.classList.remove('hidden');
+            uploadIcon.classList.add('hidden');
+
+            const reader = new FileReader();
+            const fileExtension = file.name.split('.').pop().toLowerCase();
+
+            if (fileExtension === 'csv') {
+                reader.onload = function(e) {
+                    try {
+                        Papa.parse(e.target.result, {
+                            header: true,
+                            skipEmptyLines: true,
+                            complete: function(results) {
+                                clientsData = normalizeData(results.data);
+                                renderClientsOnMap();
+                            }
+                        });
+                    } catch (error) {
+                        showNotification('Error al procesar el archivo CSV. Asegúrate de que tenga los encabezados correctos.', 'error');
+                    } finally {
+                        uploadLoader.classList.add('hidden');
+                        uploadIcon.classList.remove('hidden');
+                    }
+                };
+                reader.readAsText(file);
+            } else if (fileExtension === 'xlsx' || fileExtension === 'xls') {
+                reader.onload = function(e) {
+                    const data = new Uint8Array(e.target.result);
+                    try {
+                        const workbook = XLSX.read(data, { type: 'array' });
+                        if (workbook.SheetNames.length === 0) {
+                            showNotification('El archivo Excel no contiene ninguna hoja.', 'error');
+                            return;
+                        }
+                        const firstSheetName = workbook.SheetNames[0];
+                        const worksheet = workbook.Sheets[firstSheetName];
+                        
+                        clientsData = normalizeData(XLSX.utils.sheet_to_json(worksheet));
+                        renderClientsOnMap();
+                    } catch (error) {
+                        showNotification('Error al procesar el archivo Excel. Asegúrate de que sea un archivo válido y que la primera hoja tenga datos.', 'error');
+                    } finally {
+                        uploadLoader.classList.add('hidden');
+                        uploadIcon.classList.remove('hidden');
+                    }
+                };
+                reader.onerror = function(e) {
+                    showNotification('Error al leer el archivo. Asegúrate de que sea un archivo válido.', 'error');
+                    uploadLoader.classList.add('hidden');
+                    uploadIcon.classList.remove('hidden');
+                };
+                reader.readAsArrayBuffer(file);
+            } else {
+                showNotification('Tipo de archivo no compatible. Por favor, sube un archivo .xlsx, .xls o .csv.', 'error');
+                uploadLoader.classList.add('hidden');
+                uploadIcon.classList.remove('hidden');
+            }
+        });
+
+        // Conecta el label a la carga del archivo
+        document.getElementById('fileInputLabel').addEventListener('click', () => {
+             document.getElementById('fileInput').click();
+        });
+        
+        // Renderiza los clientes en el mapa como marcadores
+        function renderClientsOnMap() {
+            markers.clearLayers();
+            
+            const latitudKey = 'latitud';
+            const longitudKey = 'longitud';
+            
+            const validClients = clientsData.filter(c => c[latitudKey] && c[longitudKey]);
+
+            if (validClients.length === 0) {
+                showNotification('El archivo no contiene datos de latitud/longitud válidos. Asegúrate de que las columnas se llamen "latitud" y "longitud".', 'error');
+                return;
+            }
+
+            validClients.forEach(client => {
+                const lat = parseFloat(client[latitudKey]);
+                const lon = parseFloat(client[longitudKey]);
+                
+                if (!isNaN(lat) && !isNaN(lon)) {
+                    const marker = L.marker([lat, lon]);
+                    
+                    let popupContent = ``;
+                    for (const key in client) {
+                        popupContent += `<b>${key}:</b> ${client[key] || 'N/A'}<br/>`;
+                    }
+                    marker.bindPopup(popupContent);
+                    markers.addLayer(marker);
+                }
+            });
+
+            showNotification(`Se han cargado ${validClients.length} clientes en el mapa.`, 'success');
+
+            if (markers.getLayers().length > 0) {
+                const bounds = markers.getBounds();
+                if (bounds.isValid()) {
+                    map.fitBounds(bounds);
+                }
+            }
+        }
+        
+        // Maneja la descarga del archivo Excel
+        downloadBtn.addEventListener('click', () => {
+            if (!drawnItems.getLayers().length) {
+                showNotification('Por favor, dibuja un polígono en el mapa primero.', 'error');
+                return;
+            }
+            
+            const polygonLayer = drawnItems.getLayers()[0];
+            const polygon = polygonLayer.toGeoJSON();
+            
+            const latitudKey = 'latitud';
+            const longitudKey = 'longitud';
+            
+            const filteredClients = clientsData.filter(client => {
+                const lat = parseFloat(client[latitudKey]);
+                const lon = parseFloat(client[longitudKey]);
+                if (isNaN(lat) || isNaN(lon)) return false;
+                
+                const point = [lon, lat];
+                return isPointInPolygon(point, polygon.geometry.coordinates[0]);
+            });
+            
+            if (filteredClients.length > 0) {
+                const worksheet = XLSX.utils.json_to_sheet(filteredClients);
+                const workbook = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(workbook, worksheet, "Clientes");
+                XLSX.writeFile(workbook, "clientes_seleccionados.xlsx");
+                showNotification(`Se han descargado ${filteredClients.length} clientes.`, 'success');
+            } else {
+                showNotification('No se encontraron clientes en la zona dibujada.', 'error');
+            }
+        });
+
+        // Función para verificar si un punto está dentro de un polígono (algoritmo de ray-casting)
+        function isPointInPolygon(point, polygon) {
+            let x = point[0], y = point[1];
+            let inside = false;
+            for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+                let xi = polygon[i][0], yi = polygon[i][1];
+                let xj = polygon[j][0], yj = polygon[j][1];
+
+                let intersect = ((yi > y) != (yj > y))
+                    && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+                if (intersect) inside = !inside;
+            }
+            return inside;
+        }
+
+        // Función para mostrar notificaciones al usuario
+        function showNotification(message, type) {
+            messageBox.textContent = message;
+            messageBox.className = `message-box visible ${type}`;
+            setTimeout(() => {
+                messageBox.className = 'message-box';
+            }, 5000);
+        }
+
+        // Inicializa el mapa cuando la página se carga
+        window.onload = initializeMap;
+    </script>
+</body>
+</html>
